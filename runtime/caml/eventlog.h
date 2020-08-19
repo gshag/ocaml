@@ -131,5 +131,3 @@ void caml_ev_flush(void);
 #endif /*CAML_INSTR*/
 
 #endif /*CAML_EVENTLOG_H*/
-
-#endif /*CAML_EVENTLOG_H*/
