@@ -443,9 +443,9 @@ type event
 
 val new_event : string -> event
 
-val emit_begin_event : event -> unit
+val emit_begin_event : ?tid:int -> event -> unit
 
-val emit_end_event : event -> unit
+val emit_end_event : ?tid:int -> event -> unit
 
 (** [Memprof] is a sampling engine for allocated memory words. Every
    allocated word has a probability of being sampled equal to a

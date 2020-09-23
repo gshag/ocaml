@@ -17,6 +17,7 @@
 #define CAML_INTERNALS
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include "caml/alloc.h"
 #include "caml/eventlog.h"
 #include "caml/misc.h"
@@ -137,6 +138,9 @@ const char_os *fixed_metadata = "/* CTF 1.8 */\n\n"
   "    event.header := struct { /* for each event */\n"
   "        tracing_clock_int_t timestamp;\n"
   "        uint32_t id;\n"
+  "    };\n"
+  "    event.context := struct {\n"
+  "        uint32_t tid;\n"
   "    };\n"
   "    packet.context := struct {\n"
   "        uint32_t pid;\n"
@@ -340,6 +344,7 @@ struct event {
   uint16_t counter_kind; /* misc counter name */
   uint8_t alloc_bucket; /* for alloc counters */
   uint64_t count; /* for misc counters */
+  uint32_t tid; /* can be used for any events, currently only for span events */
 };
 
 #define EVENT_BUF_SIZE 4096
@@ -500,6 +505,7 @@ static void flush_events(FILE* out, struct event_buffer* eb)
     struct event ev = eb->events[i];
 
     FWRITE_EV(&ev.header, sizeof(struct ctf_event_header));
+    FWRITE_EV(&ev.tid, sizeof(uint16_t));
 
     switch (ev.header.id)
     {
@@ -528,6 +534,7 @@ static void flush_events(FILE* out, struct event_buffer* eb)
     ev_flush.timestamp;
 
   FWRITE_EV(&ev_flush, sizeof(struct ctf_event_header));
+  FWRITE_EV(&Caml_state->eventlog_startup_pid, sizeof(uint32_t));
   FWRITE_EV(&flush_duration, sizeof(uint64_t));
 
   return;
@@ -587,7 +594,8 @@ void caml_eventlog_init()
 }
 
 static void post_event(ev_span_type span_type, ev_gc_counter counter_kind,
-                       uint8_t bucket, uint64_t count, ev_type ty)
+                       uint8_t bucket, uint64_t count, bool tid_given,
+                       uint32_t cur_tid, ev_type ty)
 {
   uintnat i;
   struct event* ev;
@@ -610,22 +618,26 @@ static void post_event(ev_span_type span_type, ev_gc_counter counter_kind,
   ev->alloc_bucket = bucket;
   ev->header.timestamp = time_counter() -
                            Caml_state->eventlog_startup_timestamp;
+  if (!tid_given)
+    cur_tid = Caml_state->eventlog_startup_pid;
+  ev->tid = cur_tid;
+
   evbuf->ev_generated = i + 1;
 }
 
 void caml_ev_begin(ev_span_type span_type)
 {
-  post_event(span_type, 0, 0, 0, EV_ENTRY);
+  post_event(span_type, 0, 0, 0, false, 0, EV_ENTRY);
 }
 
 void caml_ev_end(ev_span_type span_type)
 {
-  post_event(span_type, 0, 0, 0, EV_EXIT);
+  post_event(span_type, 0, 0, 0, false, 0, EV_EXIT);
 }
 
 void caml_ev_counter(ev_gc_counter counter, uint64_t val)
 {
-  post_event(0, counter, 0, val, EV_COUNTER);
+  post_event(0, counter, 0, val, false, 0, EV_COUNTER);
 }
 
 static uint64_t alloc_buckets [20] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
@@ -661,7 +673,7 @@ void caml_ev_alloc_flush()
 
   for (i = 1; i < 20; i++) {
     if (alloc_buckets[i] != 0) {
-      post_event(0, 0, i, alloc_buckets[i], EV_ALLOC);
+      post_event(0, 0, i, alloc_buckets[i], false, 0, EV_ALLOC);
     };
     alloc_buckets[i] = 0;
   }
@@ -741,17 +753,27 @@ CAMLprim value caml_eventlog_new_event(value v)
 }
 #undef MAX_EVENT_SIZE
 
-CAMLprim value caml_eventlog_emit_begin_event(value v)
+CAMLprim value caml_eventlog_post_begin_event(value v1, value v2, value v3)
 {
-  int cur_event_id = Int_val(v);
-  post_event(EV_USER_BEGIN, 0, 0, 0, cur_event_id);
+  int cur_event_id = Int_val(v1);
+  bool tid_given = Bool_val(v2);
+  int cur_tid = 0;
+  if (tid_given)
+    cur_tid = Int_val(v3);
+
+  post_event(EV_USER_BEGIN, 0, 0, 0, tid_given, cur_tid, cur_event_id);
   return Val_unit;
 }
 
-CAMLprim value caml_eventlog_emit_end_event(value v)
+CAMLprim value caml_eventlog_post_end_event(value v1, value v2, value v3)
 {
-  int cur_event_id = Int_val(v);
-  post_event(EV_USER_END, 0, 0, 0, cur_event_id);
+  int cur_event_id = Int_val(v1);
+  bool tid_given = Bool_val(v2);
+  int cur_tid = 0;
+  if (tid_given)
+    cur_tid = Int_val(v3);
+
+  post_event(EV_USER_END, 0, 0, 0, tid_given, cur_tid, cur_event_id);
   return Val_unit;
 }
 
@@ -772,12 +794,12 @@ CAMLprim value caml_eventlog_new_event(value v)
   return Val_unit;
 }
 
-CAMLprim value caml_eventlog_emit_begin_event(value v)
+CAMLprim value caml_eventlog_post_begin_event(value v1, value v2, value v3)
 {
   return Val_unit;
 }
 
-CAMLprim value caml_eventlog_emit_end_event(value v)
+CAMLprim value caml_eventlog_post_end_event(value v1, value v2, value v3)
 {
   return Val_unit;
 }

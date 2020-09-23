@@ -123,8 +123,18 @@ let delete_alarm a = a := false
 
 type event = int
 external new_event : string -> event = "caml_eventlog_new_event"
-external emit_begin_event : event -> unit = "caml_eventlog_emit_begin_event"
-external emit_end_event : event -> unit = "caml_eventlog_emit_end_event"
+external post_begin_event : event -> bool -> int -> unit = "caml_eventlog_post_begin_event"
+external post_end_event : event -> bool -> int -> unit = "caml_eventlog_post_end_event"
+
+let emit_begin_event ?tid cur_event =
+  match tid with
+  | None -> post_begin_event cur_event false 0
+  | Some id -> post_begin_event cur_event true id
+
+let emit_end_event ?tid cur_event =
+  match tid with
+  | None -> post_end_event cur_event false 0
+  | Some id -> post_end_event cur_event true id
 
 module Memprof =
   struct
